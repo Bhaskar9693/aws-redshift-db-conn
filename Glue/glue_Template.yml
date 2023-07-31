@@ -1,0 +1,918 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  GlueSourceBucket:
+    Type: String
+    Description: Glue Source Code Bucket.
+  ArtifactBucket:
+    Type: String
+    Description: Artifact Bucket for Glue Source code reference
+  BusinessFileLandingBucket:
+    Type: String
+    Description: Artifact Bucket for Glue Source code reference
+    Default: 'lly-iris-raw-public-dev'
+  FileLandingZone:
+    Type: String
+    Description: Business File Landing Zone.
+    Default: lly-iris-raw-public-dev
+  GlueRoleArn:
+    Type: String
+    Description: Project CloudFormation Role
+  IRISToRDSSchedule:
+    Type: String
+    Description: IRIS To RDS Glue Job Trigger Schedule
+  IRISToRDSWorkFlowName:
+    Type: String
+    Description: IRIS To RDS Glue Job Workflow Name
+  AlignmentFileWorkFlowName:
+    Type: String
+    Description: Alignmnet Business File Glue Job Workflow Name
+  SegmentContributionWorkFlowName:
+    Type: String
+    Description: Segment Contribution Glue Job Workflow Name
+  Subnets:
+    Type: String
+    Description: Default Subnet ID values.
+  AdmPayerConfigFileKey:
+    Type: String
+  AdmIaConfigFileKey:
+    Type: String
+  RdsToRsConfigFileKey:
+    Type: String
+  EdbRedshiftSecretId:
+    Type: String
+  IrisRdsSecretId:
+    Type: String
+  InfoLevel:
+    Type: String
+  RegionName:
+    Type: String
+
+
+
+
+Resources:
+  GlueServicePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: AWS-Glue-Service-Policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - ec2:CreateNetworkInterface
+              - ec2:CreateSecurityGroup
+              - ec2:DeleteNetworkInterface
+              - ec2:DeleteSecurityGroup
+              - ec2:DescribeAvailabilityZones
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeSubnets
+            Effect: Allow
+            Resource: '*'
+          - Action:
+              - secretsmanager:DescribeSecret
+              - secretsmanager:GetResourcePolicy
+              - secretsmanager:GetSecretValue
+              - secretsmanager:ListSecretVersionIds
+            Effect: Allow
+            Resource:
+              - !Sub 'arn:aws:secretsmanager:*:${AWS::AccountId}:secret:mhscc_irispayer_rw*'
+              - !Sub 'arn:aws:secretsmanager:*:${AWS::AccountId}:secret:iris_adm_payer*'
+              - !Sub 'arn:aws:secretsmanager:*:${AWS::AccountId}:secret:iris_adm_cbr*'
+              - !Sub 'arn:aws:secretsmanager:*:${AWS::AccountId}:secret:vacc_*'
+          - Action:
+              - secretsmanager:GetRandomPassword
+              - secretsmanager:ListSecrets
+            Effect: Allow
+            Resource: '*'
+          - Action:
+              - kms:*
+            Effect: Allow
+            Resource: '*'
+          - Action:
+              - s3:*
+            Effect: Allow
+            Resource: '*'
+          - Action:
+              - lambda:*
+            Effect: Allow
+            Resource: "*"
+
+
+
+
+      Roles:
+        - !Ref GlueServiceRole
+
+
+
+
+  IrisCCGlueServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole          
+            Effect: Allow
+            Principal:
+              Service:
+                - glue.amazonaws.com
+                - redshift.amazonaws.com
+      Policies:
+        - PolicyName: iris_cc_redshift_to_rds_policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:  
+              - Action:
+                  - "secretsmanager:GetSecretValue"
+                Effect: Allow
+                Resource: 
+                  - !Sub "arn:aws:secretsmanager:us-east-2:${AWS::AccountId}:secret:iris_cc_redshift_secrets_cf*"
+                  - !Sub "arn:aws:secretsmanager:us-east-2:${AWS::AccountId}:secret:mhscc_irispayer_rw*"
+              - Action:
+                  - "s3:GetObject"
+                Effect: Allow
+                Resource: "*"
+              - Action:
+                  - "s3:PutObject"
+                  - "s3:DeleteObject"
+                Effect: Allow
+                Resource: "arn:aws:s3:::lly-iris-raw-public-qa/command_center_bucket/landing_data/pilot/*"
+              - Action:
+                  - "logs:CreateLogStream"
+                  - "logs:CreateLogGroup"
+                  - "logs:PutLogEvents"
+                Effect: Allow
+                Resource: "*"
+              - Action:
+                  - "kms:Decrypt"
+                  - "kms:Encrypt"
+                  - "kms:DescribeKey"
+                  - "kms:GenerateDataKey*"
+                  - "kms:ReEncrypt*"
+                Effect: Allow
+                Resource: "*"
+              - Action:
+                  - "kms:ListKeys"
+                  - "kms:ListAliases"
+                Effect: Allow
+                Resource: "*"  
+              - Action:
+                  - "lambda:InvokeFunction"
+                Effect: Allow
+                Resource:
+                  - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:iris-mhscc-ServiceNowIncidentCreator
+                  - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:iris-mhscc-GlueServiceMonitoring
+                  - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:iris_mhs_snow_cf
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+
+
+
+
+
+
+
+  #  Cross account Service role to trigger glue workflow from EDB account
+  rCCedbOrchServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iris_cc_edb_orch_service_role
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      MaxSessionDuration: 36000
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - glue.amazonaws.com
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              AWS:
+                - arn:aws:iam::846946056819:role/edb_buids_iris_cc_orch_service_role
+      Policies:
+        - PolicyName: 'mhscc-policy-glue'
+          PolicyDocument: 
+            Version: "2012-10-17"
+            Statement: 
+              - Effect: Allow
+                Action:
+                  - glue:StartWorkflowRun
+                  - glue:GetJobRuns
+                Resource:
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/MHSCC_IRIS_To_RDS_WorkFLow"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/ADMCBRToRDSWorkFlow"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/iris_cc_glue_rs_to_rds_generic_cf"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/iris_cc_glue_adm_ia_rs_to_rds_generic_cf"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:CreateLogGroup
+                  - logs:AssociateKmsKey
+                  - logs:PutLogEvents
+                  - logs:Describe*
+                  - logs:FilterLogEvents
+                  - logs:Get*
+                  - logs:List*
+                  - logs:StartQuery
+                  - logs:TestMetricFilter
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws-glue/jobs/output:*'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws-glue/jobs/error:*'
+
+
+
+
+  # Glue Service role needed for Glue Execution
+  GlueServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - glue.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonRDSFullAccess
+        - arn:aws:iam::aws:policy/AmazonVPCReadOnlyAccess
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      
+  RDSMhsccDB:
+    Type: AWS::Glue::Connection
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      ConnectionInput:
+        ConnectionType: 'JDBC'
+        Name: 'mhsccdb_etl_cf'
+        PhysicalConnectionRequirements:
+          SubnetId: !Select [1, !Split [',', !Ref Subnets]]
+          AvailabilityZone: 'us-east-2b'
+          SecurityGroupIdList:
+            - !ImportValue MHSCCRdsSecurityGroup
+        ConnectionProperties:
+          JDBC_CONNECTION_URL: 'jdbc:postgresql://mhscc:5432/mhscc_db'
+          JDBC_ENFORCE_SSL: 'false'
+          USERNAME: 'mhscc'
+          PASSWORD: 'mhscc'
+
+
+
+
+  rIrisRedShiftGlueSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Iris CC Glue Security Group for RedShift
+      VpcId: !ImportValue DefaultVPC
+  rIrisRedShiftGlueSGEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description: Self Referential
+      GroupId: !Ref rIrisRedShiftGlueSG
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      CidrIp: 0.0.0.0/0
+
+
+
+
+  IrisRSGlueConnection:
+    Type: AWS::Glue::Connection
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      ConnectionInput:
+        ConnectionType: 'JDBC'
+        Name: 'iris_cc_redshift_glue_connection_cf'
+        PhysicalConnectionRequirements:
+          SubnetId: !Select [1, !Split [',', !Ref Subnets]]
+          AvailabilityZone: 'us-east-2b'
+          SecurityGroupIdList:
+            - !Ref rIrisRedShiftGlueSG
+            - !ImportValue MHSCCRdsSecurityGroup
+           # - !ImportValue LambdaRdsSecurityGroupOutput
+        ConnectionProperties:
+          JDBC_CONNECTION_URL: 'jdbc:postgresql://mhscc:5432/mhscc_db'
+          JDBC_ENFORCE_SSL: 'false'
+          USERNAME: 'mhscc'
+          PASSWORD: 'mhscc'
+
+
+
+
+  DataMartRedshiftSecrets:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: iris_cc_redshift_secrets_cf
+      SecretString: '{"host":"host", "port":"port", "db_name":"db_name", "Accountname":"username", "password":"password"}'
+
+
+
+
+  IrisMhsccGlueIrisToRdsGenericJobNew:
+    Type: AWS::Glue::Job
+    Properties:
+      Role: !GetAtt IrisCCGlueServiceRole.Arn
+      NumberOfWorkers: 10
+      WorkerType: G.1X
+      GlueVersion: 2.0
+      Timeout: 240
+      Connections:
+        Connections:
+          - !Ref IrisRSGlueConnection
+      Name: iris_cc_glue_rs_to_rds_generic_cf
+      DefaultArguments:
+        '--TempDir': !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/temp/
+          - { GlueSourceBucket: !Ref ArtifactBucket }
+        '--job-bookmark-option': job-bookmark-disable
+        '--config_bucket': !Ref ArtifactBucket
+        '--config_file_key': !Ref AdmPayerConfigFileKey
+        '--edb_redshift_secret_id': !Ref EdbRedshiftSecretId
+        '--iris_rds_secret_id': !Ref IrisRdsSecretId
+        '--info_level': !Ref InfoLevel
+        '--region_name': !Ref RegionName
+        "--additional-python-modules": "psycopg2-binary"
+        '--extra-py-files': !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/libs/pg8000.zip
+          - { GlueSourceBucket: !Ref ArtifactBucket }
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
+          - {
+              GlueSourceBucket: !Ref ArtifactBucket,
+              Script: 'iris_cc_glue_rs_to_rds_generic.py',
+            }
+            
+  IrisMhsccGlueS3ToRdsGenericJobNew:
+    Type: AWS::Glue::Job
+    Properties:
+      Role: !GetAtt IrisCCGlueServiceRole.Arn
+      GlueVersion: 1.0
+      Timeout: 240
+      Connections:
+        Connections:
+          - !Ref IrisRSGlueConnection
+      Name: iris_cc_glue_s3_to_rds_generic_cf
+      DefaultArguments:
+        '--TempDir': !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/temp/
+          - { GlueSourceBucket: !Ref ArtifactBucket }
+        '--job-bookmark-option': job-bookmark-disable
+        '--config_bucket': !Ref ArtifactBucket
+        '--config_file_key': !Ref AdmPayerConfigFileKey
+        '--edb_redshift_secret_id': !Ref EdbRedshiftSecretId
+        '--iris_rds_secret_id': !Ref IrisRdsSecretId
+        '--info_level': !Ref InfoLevel
+        '--region_name': !Ref RegionName
+      Command:
+        Name: pythonshell
+        PythonVersion: 3
+        ScriptLocation: !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
+          - {
+              GlueSourceBucket: !Ref ArtifactBucket,
+              Script: 'iris_cc_glue_s3_to_rds_generic.py',
+            }
+  
+  IrisRdsToRsGlueGenericJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Role: ccrefactor_service_role
+      NumberOfWorkers: 5
+      WorkerType: G.1X
+      GlueVersion: 2.0
+      Timeout: 240
+      Connections:
+        Connections:
+          - !Ref IrisRSGlueConnection
+      Name: iris_cc_glue_rds_to_rs_generic_cf
+      DefaultArguments:
+        '--TempDir': !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/temp/
+          - { GlueSourceBucket: !Ref ArtifactBucket }
+        '--job-bookmark-option': job-bookmark-disable
+        '--config_bucket': !Ref ArtifactBucket
+        '--config_file_key': !Ref RdsToRsConfigFileKey
+        '--edb_redshift_secret_id': !Ref EdbRedshiftSecretId
+        '--iris_rds_secret_id': !Ref IrisRdsSecretId
+        '--info_level': !Ref InfoLevel
+        '--region_name': !Ref RegionName
+        '--extra-py-files': !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/libs/pg8000.zip
+          - { GlueSourceBucket: !Ref ArtifactBucket }
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
+          - {
+              GlueSourceBucket: !Ref ArtifactBucket,
+              Script: 'iris_cc_glue_rds_to_rs_generic.py',
+            }
+  
+  ScheduledRdsToRsJobTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Type: SCHEDULED
+      Schedule: cron(0 7,23 ? * * *)
+      StartOnCreation: true
+      Actions:
+        - JobName: iris_cc_glue_rds_to_rs_generic_cf
+          Arguments:
+            '--config_bucket': !Ref ArtifactBucket
+            '--config_file_key': !Ref RdsToRsConfigFileKey
+            '--edb_redshift_secret_id': !Ref EdbRedshiftSecretId
+            '--iris_rds_secret_id': !Ref IrisRdsSecretId
+            '--info_level': !Ref InfoLevel
+            '--region_name': !Ref RegionName           
+      Name: iris_cc_glue_trigger_rds_to_rs_generic_cf
+
+
+
+
+  IrisGlueAdmIaRsToRdsGenericJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Role: ccrefactor_service_role
+      NumberOfWorkers: 5
+      WorkerType: G.1X
+      GlueVersion: 2.0
+      Timeout: 240
+      Connections:
+        Connections:
+          - !Ref IrisRSGlueConnection
+      Name: iris_cc_glue_adm_ia_rs_to_rds_generic_cf
+      DefaultArguments:
+        '--TempDir': !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/temp/
+          - { GlueSourceBucket: !Ref ArtifactBucket }
+        '--job-bookmark-option': job-bookmark-disable
+        '--config_bucket': !Ref ArtifactBucket
+        '--config_file_key': !Ref AdmIaConfigFileKey
+        '--edb_redshift_secret_id': !Ref EdbRedshiftSecretId
+        '--iris_rds_secret_id': !Ref IrisRdsSecretId
+        '--info_level': !Ref InfoLevel
+        '--region_name': !Ref RegionName
+        "--additional-python-modules": "psycopg2-binary"
+        '--extra-py-files': !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/libs/pg8000.zip
+          - { GlueSourceBucket: !Ref ArtifactBucket }
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
+          - {
+              GlueSourceBucket: !Ref ArtifactBucket,
+              Script: 'iris_cc_glue_rs_to_rds_generic.py',
+            }
+
+
+
+
+  irismhsccglueiristordsgenericjob:
+    Type: AWS::Glue::Job
+    Properties:
+      Role: !GetAtt GlueServiceRole.Arn
+      NumberOfWorkers: 5
+      WorkerType: G.1X
+      GlueVersion: 2.0
+      Timeout: 240
+      Connections:
+        Connections:
+          - !Ref RDSMhsccDB
+      Name: iris_mhscc_glue_iris_to_rds_generic_cf
+      DefaultArguments:
+        '--TempDir': !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/temp/
+          - { GlueSourceBucket: !Ref ArtifactBucket }
+        '--job-bookmark-option': job-bookmark-disable
+        '--config_file_name': !ImportValue IRISToRDSGlueConfig
+        '--iris_key': iris_adm_payer
+        '--cbr_key': iris_adm_cbr
+        '--landing_zone': !Join [ "/", [ !ImportValue BusinessFileLandingBucket , command_center_bucket/landing_data ] ]
+        '--config_bucket': !Ref ArtifactBucket
+        '--mhsccdb_key': mhscc_irispayer_rw
+        '--last_n_months': 9
+        '--extra-py-files': !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/edb_iris_common.py
+          - { GlueSourceBucket: !Ref ArtifactBucket }
+        '--extra-jars': !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/jars/nzjdbc3.jar
+          - { GlueSourceBucket: !Ref ArtifactBucket }
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
+          - {
+              GlueSourceBucket: !Ref ArtifactBucket,
+              Script: 'iris_mhscc_glue_iris_to_rds_generic.py',
+            }
+
+
+
+
+  irismhsccglues3toauroragenericjob:
+    Type: AWS::Glue::Job
+    Properties:
+      Role: !GetAtt GlueServiceRole.Arn
+      MaxCapacity: 1
+      GlueVersion: 1.0
+      Timeout: 360
+      Connections:
+        Connections:
+          - !Ref RDSMhsccDB
+      Name: iris_mhscc_glue_s3_to_aurora_generic_cf
+      DefaultArguments:
+        '--landing_bucket': !ImportValue BusinessFileLandingBucket
+        '--job-bookmark-option': job-bookmark-disable
+        '--config_file_name': !ImportValue IRISToRDSGlueConfig
+        '--config_bucket': !Ref ArtifactBucket
+        '--mhsccdb_schema': irispayer
+        '--landing_data': command_center_bucket/landing_data
+        '--mhsccdb_key': mhscc_irispayer_rw
+      Command:
+        Name: pythonshell
+        PythonVersion: 3
+        ScriptLocation: !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
+          - {
+              GlueSourceBucket: !Ref ArtifactBucket,
+              Script: 'iris_mhscc_glue_s3_to_aurora_generic.py',
+            }
+
+
+
+
+
+
+
+  IRISToRDSWorkFlow:
+    Type: AWS::Glue::Workflow
+    Properties: 
+      Description: Workflow for IRIS to RDS Data Ingest
+      Name: !Ref IRISToRDSWorkFlowName
+
+
+
+
+  IRISUnloadTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: IRISUnloadTrigger
+      Type: ON_DEMAND
+      #Schedule: !Ref IRISToRDSSchedule
+      Actions:
+        - JobName: !Ref IrisMhsccGlueIrisToRdsGenericJobNew
+      WorkflowName: !Ref IRISToRDSWorkFlow
+
+
+
+
+  IRISUnloadSuccessfullTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: IRISUnloadSuccessfullTrigger
+      Type: CONDITIONAL
+      StartOnCreation: True
+      Description: MHSCC Trigger to start the S3 to RDS load
+      Actions:
+        - JobName: !Ref irismhsccglues3toauroragenericjob
+      Predicate:
+        Conditions:
+          - LogicalOperator: EQUALS
+            JobName: !Ref IrisMhsccGlueIrisToRdsGenericJobNew
+            State: SUCCEEDED
+      WorkflowName: !Ref IRISToRDSWorkFlow
+
+
+
+
+  irismhsccgluebusinessfileloadgenericjob:
+    Type: AWS::Glue::Job
+    Properties:
+      Role: !GetAtt GlueServiceRole.Arn
+      MaxCapacity: 1
+      GlueVersion: 1.0
+      Timeout: 360
+      Connections:
+        Connections:
+          - !Ref RDSMhsccDB
+      Name: iris_mhscc_glue_business_file_load_generic_cf
+      DefaultArguments:
+        '--landing_bucket': !ImportValue BusinessFileLandingBucket
+        '--job-bookmark-option': job-bookmark-disable
+        '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_business_file_s3_to_rds_config.json
+        '--config_bucket': !Ref ArtifactBucket
+        '--mhsccdb_schema': irispayer
+        '--landing_data': command_center_bucket/landing_data/business_files
+        '--mhsccdb_key': mhscc_irispayer_rw
+      Command:
+        Name: pythonshell
+        PythonVersion: 3
+        ScriptLocation: !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
+          - {
+              GlueSourceBucket: !Ref ArtifactBucket,
+              Script: 'iris_mhscc_glue_s3_to_aurora_generic.py',
+            }
+
+
+
+
+  irismhsccglueprocesseddataloadgenericjob:
+    Type: AWS::Glue::Job
+    Properties:
+      Role: !GetAtt GlueServiceRole.Arn
+      MaxCapacity: 1
+      GlueVersion: 1.0
+      Timeout: 720
+      ExecutionProperty:
+        MaxConcurrentRuns: 10
+      Connections:
+        Connections:
+          - !Ref RDSMhsccDB
+      Name: iris_mhscc_glue_processed_data_load_generic_cf
+      DefaultArguments:
+        '--job-bookmark-option': job-bookmark-disable
+        '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_processed_data_load_config.json
+        '--mhsccdb_schema': acctmgr
+        '--config_bucket': !Ref ArtifactBucket
+        '--mhsccdb_key': mhscc_irispayer_rw
+      Command:
+        Name: pythonshell
+        PythonVersion: 3
+        ScriptLocation: !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
+          - {
+              GlueSourceBucket: !Ref ArtifactBucket,
+              Script: 'iris_mhscc_glue_processed_data_load_generic.py',
+            }
+
+
+
+
+  AlignmentFileWorkFlow:
+    Type: AWS::Glue::Workflow
+    Properties: 
+      Description: Workflow for MHSCC Alignment File Ingest To RDS
+      Name: !Ref AlignmentFileWorkFlowName
+
+
+
+
+  AlignmentFileTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: AlignmentFileTrigger
+      Type: ON_DEMAND
+      Actions:
+        - JobName: !Ref irismhsccgluebusinessfileloadgenericjob
+      WorkflowName: !Ref AlignmentFileWorkFlow
+
+
+
+
+  AlignmentFileloadSuccessfullTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: AlignmentFileloadSuccessfullTrigger
+      Type: CONDITIONAL
+      StartOnCreation: True
+      Description: MHSCC Trigger to start the processed tables load job
+      Actions:
+        - JobName: !Ref irismhsccglueprocesseddataloadgenericjob
+          Arguments: 
+            '--job-bookmark-option': job-bookmark-disable
+            '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_alignment_based_processed_data_load_config.json
+            '--mhsccdb_schema': acctmgr
+            '--config_bucket': !Ref ArtifactBucket
+            '--mhsccdb_key': mhscc_irispayer_rw
+      Predicate:
+        Conditions:
+          - LogicalOperator: EQUALS
+            JobName: !Ref irismhsccgluebusinessfileloadgenericjob
+            State: SUCCEEDED
+      WorkflowName: !Ref AlignmentFileWorkFlow
+
+
+
+
+  SegmentContributionWorkFlow:
+    Type: AWS::Glue::Workflow
+    Properties: 
+      Description: Workflow for MHSCC Segment Contribution Ingest To RDS
+      Name: !Ref SegmentContributionWorkFlowName
+
+
+
+
+  SegmentContributionTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: SegmentContributionTrigger
+      Type: ON_DEMAND
+      Actions:
+        - JobName: !Ref irismhsccglueprocesseddataloadgenericjob
+          Arguments: 
+            '--job-bookmark-option': job-bookmark-disable
+            '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_segment_contribution_processed_data_load_config.json
+            '--mhsccdb_schema': acctmgr
+            '--config_bucket': !Ref ArtifactBucket
+            '--mhsccdb_key': mhscc_irispayer_rw
+      WorkflowName: !Ref SegmentContributionWorkFlow
+
+
+
+
+  PtgOverridesBasedLoadsWorkFlow:
+    Type: AWS::Glue::Workflow
+    Properties: 
+      Description: Workflow for loading mhsccdb_mrkt_ovrvw_brnd_access_pct and mhsccdb_acnt_brnd_access_aggr tables
+      Name: 'PtgOverridesLoadBrandAccessTable'
+
+
+
+
+  PtgOverridesBasedLoadsTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: PtgOverridesBasedLoadsTrigger
+      Type: ON_DEMAND
+      Actions:
+        - JobName: !Ref irismhsccglueprocesseddataloadgenericjob
+          Arguments: 
+            '--job-bookmark-option': job-bookmark-disable
+            '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_ptg_overrides_dependent_processed_table_load_config.json
+            '--mhsccdb_schema': acctmgr
+            '--config_bucket': !Ref ArtifactBucket
+            '--mhsccdb_key': mhscc_irispayer_rw
+      WorkflowName: !Ref PtgOverridesBasedLoadsWorkFlow
+
+
+
+
+  AlignmentDailyWorkFlow:
+    Type: AWS::Glue::Workflow
+    Properties: 
+      Description: Workflow for loading alignment dependent tables
+      Name: 'AlignmentDailyWorkFlow'
+
+
+
+
+  AlignmentWorkFlowTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: AlignmentWorkFlowTrigger
+      Type: ON_DEMAND
+      Actions:
+        - JobName: !Ref irismhsccglueprocesseddataloadgenericjob
+          Arguments: 
+            '--job-bookmark-option': job-bookmark-disable
+            '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_alignment_based_processed_data_load_config.json
+            '--mhsccdb_schema': acctmgr
+            '--config_bucket': !Ref ArtifactBucket
+            '--mhsccdb_key': mhscc_irispayer_rw
+      WorkflowName: !Ref AlignmentDailyWorkFlow
+
+
+
+
+  ReportingTablesLoadsWorkflow:
+    Type: AWS::Glue::Workflow
+    Properties: 
+      Description: Workflow for loading reporting dependent table
+      Name: 'ReportingTablesLoadsWorkflow'
+
+
+
+
+  ReportingTablesLoadsTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: ReportingTablesLoadsTrigger
+      Type: ON_DEMAND
+      # Type: SCHEDULED
+      # Schedule: cron(15 15 ? * MON-FRI *)
+      # Schedule: cron(0/60 * ? * MON-FRI *)
+      # StartOnCreation: true
+      Actions:
+        - JobName: !Ref irismhsccglueprocesseddataloadgenericjob
+          Arguments: 
+            '--job-bookmark-option': job-bookmark-disable
+            '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_reporting_table_load_config.json
+            '--mhsccdb_schema': acctmgr
+            '--config_bucket': !Ref ArtifactBucket
+            '--mhsccdb_key': mhscc_irispayer_rw
+      WorkflowName: !Ref ReportingTablesLoadsWorkflow
+
+
+
+
+  EHRReportingTablesLoadsWorkflow:
+    Type: AWS::Glue::Workflow
+    Properties: 
+      Description: Workflow for loading reporting dependent table
+      Name: 'EHRReportingTablesLoadsWorkflow'
+
+
+
+
+  EHRReportingTablesLoadsTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: EHRReportingTablesLoadsTrigger
+      Type: SCHEDULED
+      Schedule: cron(00 23 ? * MON-FRI *)
+      StartOnCreation: true
+      Actions:
+        - JobName: !Ref irismhsccglueprocesseddataloadgenericjob
+          Arguments: 
+            '--job-bookmark-option': job-bookmark-disable
+            '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_ehr_reporting_table_load_config.json
+            '--mhsccdb_schema': acctmgr
+            '--config_bucket': !Ref ArtifactBucket
+            '--mhsccdb_key': mhscc_irispayer_rw
+      WorkflowName: !Ref EHRReportingTablesLoadsWorkflow    
+
+
+
+
+  ADMCBRToRDSWorkFlow:
+    Type: AWS::Glue::Workflow
+    Properties: 
+      Description: Workflow for loading from adm_cbr to RDS
+      Name: 'ADMCBRToRDSWorkFlow'
+
+
+
+
+  ADMCBRToRDSWorkFlowTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: ADMCBRToRDSWorkFlowTrigger
+      Type: ON_DEMAND
+      Actions:
+        - JobName: !Ref IrisGlueAdmIaRsToRdsGenericJob
+      WorkflowName: !Ref ADMCBRToRDSWorkFlow
+
+
+
+
+  irismhsccgluealignmentdataloadgenericjob:
+    Type: AWS::Glue::Job
+    Properties:
+      Role: !GetAtt GlueServiceRole.Arn
+      MaxCapacity: 1
+      GlueVersion: 1.0
+      Timeout: 360
+      Connections:
+        Connections:
+          - !Ref RDSMhsccDB
+      Name: iris_mhscc_glue_alignment_load_generic
+      DefaultArguments:
+        '--job-bookmark-option': job-bookmark-disable
+        '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_alignment_idm_role_map_config.json
+        '--mhsccdb_schema': acctmgr
+        '--config_bucket': !Ref ArtifactBucket
+        '--mhsccdb_key': mhscc_irispayer_rw
+        '--vacc_srvc_acnt': vacc_srvc_acnt
+        '--WorkerAPIEndpont': !ImportValue WorkerAPIEndpont
+        '--ADGroupAPIEndpont': !ImportValue ADGroupAPIEndpont
+        '--workday_api_config': aws_glue/mhscc/config/workday_api_config/
+        '--EnvType': !ImportValue EnvType
+      Command:
+        Name: pythonshell
+        PythonVersion: 3
+        ScriptLocation: !Sub
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
+          - {
+              GlueSourceBucket: !Ref ArtifactBucket,
+              Script: 'iris_mhscc_glue_alignment_load_generic.py',
+            }
+  
+  rIrisRDSSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: "ingress rule for rds"
+      IpProtocol: tcp
+      FromPort: 5430
+      ToPort: 5440
+      GroupId: sg-097920c6aa0fbdb1e
+      SourceSecurityGroupId: sg-09478d165670fe8d9
+ 
