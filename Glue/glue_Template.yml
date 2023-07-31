@@ -9,11 +9,11 @@ Parameters:
   BusinessFileLandingBucket:
     Type: String
     Description: Artifact Bucket for Glue Source code reference
-    Default: 'lly-iris-raw-public-dev'
+    Default: ''
   FileLandingZone:
     Type: String
     Description: Business File Landing Zone.
-    Default: lly-iris-raw-public-dev
+    Default: ''
   GlueRoleArn:
     Type: String
     Description: Project CloudFormation Role
@@ -195,7 +195,7 @@ Resources:
             Effect: Allow
             Principal:
               AWS:
-                - arn:aws:iam::846946056819:role/edb_buids_iris_cc_orch_service_role
+                - arn:aws:iam::mention_acnt_id:role/rolename
       Policies:
         - PolicyName: 'mhscc-policy-glue'
           PolicyDocument: 
@@ -206,10 +206,10 @@ Resources:
                   - glue:StartWorkflowRun
                   - glue:GetJobRuns
                 Resource:
-                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/MHSCC_IRIS_To_RDS_WorkFLow"
-                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/ADMCBRToRDSWorkFlow"
-                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/iris_cc_glue_rs_to_rds_generic_cf"
-                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/iris_cc_glue_adm_ia_rs_to_rds_generic_cf"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/workflowname"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/workflowname"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/jobname"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/jobname"
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -259,7 +259,7 @@ Resources:
           SubnetId: !Select [1, !Split [',', !Ref Subnets]]
           AvailabilityZone: 'us-east-2b'
           SecurityGroupIdList:
-            - !ImportValue MHSCCRdsSecurityGroup
+            - !ImportValue SG_name
         ConnectionProperties:
           JDBC_CONNECTION_URL: 'jdbc:postgresql://mhscc:5432/mhscc_db'
           JDBC_ENFORCE_SSL: 'false'
@@ -313,7 +313,7 @@ Resources:
   DataMartRedshiftSecrets:
     Type: 'AWS::SecretsManager::Secret'
     Properties:
-      Name: iris_cc_redshift_secrets_cf
+      Name: 
       SecretString: '{"host":"host", "port":"port", "db_name":"db_name", "Accountname":"username", "password":"password"}'
 
 
@@ -330,7 +330,7 @@ Resources:
       Connections:
         Connections:
           - !Ref IrisRSGlueConnection
-      Name: iris_cc_glue_rs_to_rds_generic_cf
+      Name: 
       DefaultArguments:
         '--TempDir': !Sub
           - s3://${GlueSourceBucket}/aws_glue/mhscc/temp/
@@ -353,7 +353,7 @@ Resources:
           - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
           - {
               GlueSourceBucket: !Ref ArtifactBucket,
-              Script: 'iris_cc_glue_rs_to_rds_generic.py',
+              Script: 'scriptname.py',
             }
             
   IrisMhsccGlueS3ToRdsGenericJobNew:
@@ -365,7 +365,7 @@ Resources:
       Connections:
         Connections:
           - !Ref IrisRSGlueConnection
-      Name: iris_cc_glue_s3_to_rds_generic_cf
+      Name: 
       DefaultArguments:
         '--TempDir': !Sub
           - s3://${GlueSourceBucket}/aws_glue/mhscc/temp/
@@ -384,7 +384,7 @@ Resources:
           - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
           - {
               GlueSourceBucket: !Ref ArtifactBucket,
-              Script: 'iris_cc_glue_s3_to_rds_generic.py',
+              Script: 'scriptname.py',
             }
   
   IrisRdsToRsGlueGenericJob:
@@ -398,7 +398,7 @@ Resources:
       Connections:
         Connections:
           - !Ref IrisRSGlueConnection
-      Name: iris_cc_glue_rds_to_rs_generic_cf
+      Name: 
       DefaultArguments:
         '--TempDir': !Sub
           - s3://${GlueSourceBucket}/aws_glue/mhscc/temp/
@@ -420,7 +420,7 @@ Resources:
           - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
           - {
               GlueSourceBucket: !Ref ArtifactBucket,
-              Script: 'iris_cc_glue_rds_to_rs_generic.py',
+              Script: 'scriptname.py',
             }
   
   ScheduledRdsToRsJobTrigger:
@@ -438,7 +438,7 @@ Resources:
             '--iris_rds_secret_id': !Ref IrisRdsSecretId
             '--info_level': !Ref InfoLevel
             '--region_name': !Ref RegionName           
-      Name: iris_cc_glue_trigger_rds_to_rs_generic_cf
+      Name: 
 
 
 
@@ -454,7 +454,7 @@ Resources:
       Connections:
         Connections:
           - !Ref IrisRSGlueConnection
-      Name: iris_cc_glue_adm_ia_rs_to_rds_generic_cf
+      Name: 
       DefaultArguments:
         '--TempDir': !Sub
           - s3://${GlueSourceBucket}/aws_glue/mhscc/temp/
@@ -477,7 +477,7 @@ Resources:
           - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
           - {
               GlueSourceBucket: !Ref ArtifactBucket,
-              Script: 'iris_cc_glue_rs_to_rds_generic.py',
+              Script: 'scriptname.py',
             }
 
 
@@ -503,12 +503,12 @@ Resources:
         '--config_file_name': !ImportValue IRISToRDSGlueConfig
         '--iris_key': iris_adm_payer
         '--cbr_key': iris_adm_cbr
-        '--landing_zone': !Join [ "/", [ !ImportValue BusinessFileLandingBucket , command_center_bucket/landing_data ] ]
+        '--landing_zone': !Join [ "/", [ !ImportValue BusinessFileLandingBucket] ]
         '--config_bucket': !Ref ArtifactBucket
         '--mhsccdb_key': mhscc_irispayer_rw
         '--last_n_months': 9
         '--extra-py-files': !Sub
-          - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/edb_iris_common.py
+          - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/scriptname.py
           - { GlueSourceBucket: !Ref ArtifactBucket }
         '--extra-jars': !Sub
           - s3://${GlueSourceBucket}/aws_glue/mhscc/jars/nzjdbc3.jar
@@ -520,7 +520,7 @@ Resources:
           - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
           - {
               GlueSourceBucket: !Ref ArtifactBucket,
-              Script: 'iris_mhscc_glue_iris_to_rds_generic.py',
+              Script: 'scriptname.py',
             }
 
 
@@ -536,7 +536,7 @@ Resources:
       Connections:
         Connections:
           - !Ref RDSMhsccDB
-      Name: iris_mhscc_glue_s3_to_aurora_generic_cf
+      Name: 
       DefaultArguments:
         '--landing_bucket': !ImportValue BusinessFileLandingBucket
         '--job-bookmark-option': job-bookmark-disable
@@ -544,7 +544,7 @@ Resources:
         '--config_bucket': !Ref ArtifactBucket
         '--mhsccdb_schema': irispayer
         '--landing_data': command_center_bucket/landing_data
-        '--mhsccdb_key': mhscc_irispayer_rw
+        '--mhsccdb_key': 
       Command:
         Name: pythonshell
         PythonVersion: 3
@@ -552,7 +552,7 @@ Resources:
           - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
           - {
               GlueSourceBucket: !Ref ArtifactBucket,
-              Script: 'iris_mhscc_glue_s3_to_aurora_generic.py',
+              Script: 'scriptname.py',
             }
 
 
@@ -616,7 +616,7 @@ Resources:
       DefaultArguments:
         '--landing_bucket': !ImportValue BusinessFileLandingBucket
         '--job-bookmark-option': job-bookmark-disable
-        '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_business_file_s3_to_rds_config.json
+        '--config_file_name': aws_glue/mhscc/config/file.json
         '--config_bucket': !Ref ArtifactBucket
         '--mhsccdb_schema': irispayer
         '--landing_data': command_center_bucket/landing_data/business_files
@@ -628,7 +628,7 @@ Resources:
           - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
           - {
               GlueSourceBucket: !Ref ArtifactBucket,
-              Script: 'iris_mhscc_glue_s3_to_aurora_generic.py',
+              Script: 'scriptname.py',
             }
 
 
@@ -646,7 +646,7 @@ Resources:
       Connections:
         Connections:
           - !Ref RDSMhsccDB
-      Name: iris_mhscc_glue_processed_data_load_generic_cf
+      Name: jobname
       DefaultArguments:
         '--job-bookmark-option': job-bookmark-disable
         '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_processed_data_load_config.json
@@ -660,7 +660,7 @@ Resources:
           - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
           - {
               GlueSourceBucket: !Ref ArtifactBucket,
-              Script: 'iris_mhscc_glue_processed_data_load_generic.py',
+              Script: 'scriptname.py',
             }
 
 
@@ -698,7 +698,7 @@ Resources:
         - JobName: !Ref irismhsccglueprocesseddataloadgenericjob
           Arguments: 
             '--job-bookmark-option': job-bookmark-disable
-            '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_alignment_based_processed_data_load_config.json
+            '--config_file_name': aws_glue/mhscc/config/file.json
             '--mhsccdb_schema': acctmgr
             '--config_bucket': !Ref ArtifactBucket
             '--mhsccdb_key': mhscc_irispayer_rw
@@ -730,7 +730,7 @@ Resources:
         - JobName: !Ref irismhsccglueprocesseddataloadgenericjob
           Arguments: 
             '--job-bookmark-option': job-bookmark-disable
-            '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_segment_contribution_processed_data_load_config.json
+            '--config_file_name': aws_glue/mhscc/config/file.json
             '--mhsccdb_schema': acctmgr
             '--config_bucket': !Ref ArtifactBucket
             '--mhsccdb_key': mhscc_irispayer_rw
@@ -742,7 +742,7 @@ Resources:
   PtgOverridesBasedLoadsWorkFlow:
     Type: AWS::Glue::Workflow
     Properties: 
-      Description: Workflow for loading mhsccdb_mrkt_ovrvw_brnd_access_pct and mhsccdb_acnt_brnd_access_aggr tables
+      Description: Workflow for loading table_name1 and table_name2 tables
       Name: 'PtgOverridesLoadBrandAccessTable'
 
 
@@ -757,7 +757,7 @@ Resources:
         - JobName: !Ref irismhsccglueprocesseddataloadgenericjob
           Arguments: 
             '--job-bookmark-option': job-bookmark-disable
-            '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_ptg_overrides_dependent_processed_table_load_config.json
+            '--config_file_name': aws_glue/mhscc/config/file.json
             '--mhsccdb_schema': acctmgr
             '--config_bucket': !Ref ArtifactBucket
             '--mhsccdb_key': mhscc_irispayer_rw
@@ -784,7 +784,7 @@ Resources:
         - JobName: !Ref irismhsccglueprocesseddataloadgenericjob
           Arguments: 
             '--job-bookmark-option': job-bookmark-disable
-            '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_alignment_based_processed_data_load_config.json
+            '--config_file_name': aws_glue/mhscc/config/file.json
             '--mhsccdb_schema': acctmgr
             '--config_bucket': !Ref ArtifactBucket
             '--mhsccdb_key': mhscc_irispayer_rw
@@ -815,7 +815,7 @@ Resources:
         - JobName: !Ref irismhsccglueprocesseddataloadgenericjob
           Arguments: 
             '--job-bookmark-option': job-bookmark-disable
-            '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_reporting_table_load_config.json
+            '--config_file_name': aws_glue/mhscc/config/file.json
             '--mhsccdb_schema': acctmgr
             '--config_bucket': !Ref ArtifactBucket
             '--mhsccdb_key': mhscc_irispayer_rw
@@ -844,7 +844,7 @@ Resources:
         - JobName: !Ref irismhsccglueprocesseddataloadgenericjob
           Arguments: 
             '--job-bookmark-option': job-bookmark-disable
-            '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_ehr_reporting_table_load_config.json
+            '--config_file_name': aws_glue/mhscc/config/file.json
             '--mhsccdb_schema': acctmgr
             '--config_bucket': !Ref ArtifactBucket
             '--mhsccdb_key': mhscc_irispayer_rw
@@ -887,7 +887,7 @@ Resources:
       Name: iris_mhscc_glue_alignment_load_generic
       DefaultArguments:
         '--job-bookmark-option': job-bookmark-disable
-        '--config_file_name': aws_glue/mhscc/config/iris_mhscc_glue_alignment_idm_role_map_config.json
+        '--config_file_name': aws_glue/mhscc/config/file.json
         '--mhsccdb_schema': acctmgr
         '--config_bucket': !Ref ArtifactBucket
         '--mhsccdb_key': mhscc_irispayer_rw
@@ -903,7 +903,7 @@ Resources:
           - s3://${GlueSourceBucket}/aws_glue/mhscc/scripts/${Script}
           - {
               GlueSourceBucket: !Ref ArtifactBucket,
-              Script: 'iris_mhscc_glue_alignment_load_generic.py',
+              Script: 'scriptname.py',
             }
   
   rIrisRDSSecurityGroupIngress:
@@ -913,6 +913,6 @@ Resources:
       IpProtocol: tcp
       FromPort: 5430
       ToPort: 5440
-      GroupId: sg-097920c6aa0fbdb1e
-      SourceSecurityGroupId: sg-09478d165670fe8d9
+      GroupId: sg-*************
+      SourceSecurityGroupId: sg-************
  
